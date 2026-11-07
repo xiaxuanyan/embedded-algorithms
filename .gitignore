@@ -1,0 +1,13 @@
+# 编译产物
+cmake-build-*/
+*.exe
+*.o
+*.obj
+
+# IDE配置
+.idea/
+.vscode/
+
+# 临时文件
+*.log
+*.tmp
