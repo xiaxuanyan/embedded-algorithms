@@ -1,0 +1,8 @@
+//
+// Created by 15902 on 2026/11/7.
+//
+
+#ifndef EMBEDDED_ALGORITHMS_MAIN_H
+#define EMBEDDED_ALGORITHMS_MAIN_H
+
+#endif //EMBEDDED_ALGORITHMS_MAIN_H
