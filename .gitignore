@@ -1,5 +1,6 @@
 # 编译产物
 cmake-build-*/
+/build/
 *.exe
 *.o
 *.obj
@@ -7,7 +8,7 @@ cmake-build-*/
 # IDE配置
 .idea/
 .vscode/
-
+/.clangd
 # 临时文件
 *.log
 *.tmp
