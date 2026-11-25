@@ -4,13 +4,13 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
-#include <stddef.h>
 
 #define COIL_LEN 100
 #define DISCRETE_LEN 100
 #define INPUTREG_LEN 100
 #define HOLDING_LEN 100
 #define MODBUS_BUF_SIZE 256
+#define MODBUS_SLAVE_ADDR  0x01U   // 本机从站地址
 
 typedef struct{
     uint8_t coil[COIL_LEN];
@@ -83,6 +83,12 @@ static uint8_t mb_get_bit(const uint8_t *buf, uint16_t idx)
 	return buf[idx];
 }
 
+static uint8_t mb_get_reg(const uint8_t *buf, uint16_t idx)
+{
+    return buf[idx];
+}
+
+
 static  void mb_set_bit(uint8_t *buf, uint16_t idx, uint8_t value)
 {
 
@@ -101,7 +107,7 @@ static uint8_t mb_get_value(const uint8_t *buf, uint16_t idx)
     return (uint8_t)(buf[i] >> j) & 0x01U;
 }
 
-/*=============================================字节读取函数============================================*/
+/*=============================================bit读取函数============================================*/
 
 uint16_t mb_read_bits(const uint8_t *rx,                    // 从机发送主机要读的数据
                       uint8_t rx_len,                       // rx实际接收到的字节
@@ -116,6 +122,9 @@ uint16_t mb_read_bits(const uint8_t *rx,                    // 从机发送主�
 	uint16_t start = put_get16(&rx[2]);
 
     if(len == 0 || len > 2000U || start > max_bits || len > (max_bits - start)) return 0;
+
+    uint16_t crc_16 = (uint16_t)rx[6] | (uint16_t)(rx[7] << 8);
+    if (crc_16 != crc16(rx,6U)) return 0;
     // bit占字节个数
     uint16_t bit_len = (uint16_t)((len + 7) / 8);
     //  除CRC，rx的长度
@@ -132,15 +141,15 @@ uint16_t mb_read_bits(const uint8_t *rx,                    // 从机发送主�
 
     tx[0] = rx[0];
     tx[1] = rx[1];
-    tx[2] = bit_len;
+    tx[2] = (uint8_t)bit_len;
 	uint16_t crc16_bit =  crc16(tx, count);
     tx[count] = (uint8_t)crc16_bit;
-    tx[count + 1] = (uint8_t)crc16_bit >> 8;
+    tx[count + 1] = (uint8_t)(crc16_bit >> 8);
 
     return (uint16_t)(count + 2U);
 }
 
-/*=============================================字节发送函数============================================*/
+/*=============================================bit发送函数============================================*/
 uint16_t mb_write_bits(const uint8_t *rx, uint8_t rx_len, uint8_t *tx, uint8_t *arr, uint16_t max_bits)
 {
     if (rx_len < 8) return 0;
@@ -162,8 +171,7 @@ uint16_t mb_write_bits(const uint8_t *rx, uint8_t rx_len, uint8_t *tx, uint8_t *
         {
             arr[start] = 0;
         }else return 0;
-    }else if (rx[1] == 0x0FU)
-    {
+    }else if (rx[1] == 0x0FU){
         /*=======================================写多线圈=======================================*/
         if(rx_len < 10U) return 0;
 
@@ -192,10 +200,142 @@ uint16_t mb_write_bits(const uint8_t *rx, uint8_t rx_len, uint8_t *tx, uint8_t *
     memcpy(tx,rx,6U);
     uint16_t crc16_t = crc16(tx,6U);
     tx[6] = (uint8_t)crc16_t;
-    tx[7] = (uint8_t)crc16_t >> 8;
+    tx[7] = (uint8_t)(crc16_t >> 8);
 
     return 8U;
 }
+
+/*=============================================寄存器读取函数============================================*/
+uint16_t mb_read_reg(const uint8_t *rx,uint16_t rx_len, uint8_t *tx, uint16_t *arr, uint16_t max_reg_len)
+{
+    if (rx_len != 8U) return 0;
+
+    uint16_t start = put_get16(&rx[2]);
+    uint16_t len = put_get16(&rx[4]);
+
+    if (len == 0 || len > 125U || start > max_reg_len || len > (max_reg_len - start)) return 0;
+
+    uint16_t crc_16 = (uint16_t)rx[6] | (uint16_t)rx[7] << 8;
+    if (crc_16 != crc16(rx,6U)) return 0;
+
+    for (uint8_t i = 0; i < len; i++)
+    {
+        uint16_t rxs = start + i;
+        put_16(&tx[3 + i*2U],arr[rxs]);
+    }
+    //除CRC16总长
+    uint16_t count = 3 + len * 2;
+    tx[0] = rx[0];
+    tx[1] = rx[1];
+    tx[2] = (uint8_t)(len * 2);
+    uint16_t crc16_reg = crc16(tx,count);
+    tx[count] = (uint8_t)crc16_reg;
+    tx[count + 1] = (uint8_t)(crc16_reg >> 8);
+
+    return count + 2U;
+}
+
+/*=============================================寄存器发送函数============================================*/
+uint16_t mb_write_reg(const uint8_t *rx, uint8_t rx_len, uint8_t *tx, uint16_t *arr, uint16_t max_reg_len)
+{
+    if (rx_len < 8) return 0;
+    /*==========================================写单个寄存器==============================================*/
+    if (rx[1] == 0x06U)
+    {
+        uint16_t start = put_get16(&rx[2]);
+
+        if (rx_len != 8 || start >= max_reg_len) return 0;
+
+        uint16_t crc_16 = (uint16_t)rx[6] | (uint16_t)(rx[7] << 8);
+        if (crc_16 != crc16(rx,6U)) return 0;
+
+        arr[start] = put_get16(&rx[4]);
+    }else if (rx[1] == 0x10U)
+    {
+        /*==========================================写单个寄存器==============================================*/
+        if(rx_len < 10U) return 0;
+
+        uint16_t start = put_get16(&rx[2]);
+        uint16_t reg_len = put_get16(&rx[4]);
+        if (rx[6] != reg_len * 2U) return 0;
+        if (rx_len != 9U + reg_len * 2U) return 0;
+        if (reg_len == 0 || reg_len > 123 || reg_len + start > max_reg_len) return 0;
+
+        uint16_t crc_start = reg_len * 2 + 7;
+        uint16_t crc_16 = (uint16_t)rx[crc_start] | (uint16_t)rx[crc_start + 1] << 8;
+        if (crc_16 != crc16(rx,crc_start)) return 0;
+
+        for (uint16_t i = 0; i < reg_len; i++)
+        {
+            arr[start + i] = put_get16(&rx[7 + i*2U]);
+        }
+    }else return 0;
+
+    memcpy(tx,rx,6U);
+    uint16_t crc16_t = crc16(tx,6U);
+    tx[6] = (uint8_t)crc16_t;
+    tx[7] = (uint8_t)(crc16_t >> 8);
+
+    return 8U;
+}
+
+
+uint16_t modbus_process(const uint8_t *rx, uint16_t rx_len, uint8_t *tx)
+{
+    // 合法 Modbus 请求帧最短 8 字节；不是发给本机地址的直接忽略
+    if (rx_len < 8U || rx[0] != MODBUS_SLAVE_ADDR) return 0;
+    //先验证一遍CRC16
+    uint16_t crc_rx = (uint16_t)rx[rx_len - 2U] | ((uint16_t)rx[rx_len - 1U] << 8);
+    if (crc_rx != crc16(rx, (uint16_t)(rx_len - 2U))) return 0;
+
+    // 按功能码分发到对应的读写函数和数据区
+    switch (rx[1])
+    {
+    case 0x01U: // 读线圈
+        return mb_read_bits(rx, (uint8_t)rx_len, tx, modbus_data.coil, COIL_LEN);
+
+    case 0x02U: // 读离散输入（只读）
+        return mb_read_bits(rx, (uint8_t)rx_len, tx, modbus_data.discrete, DISCRETE_LEN);
+
+    case 0x03U: // 读保持寄存器
+        return mb_read_reg(rx, rx_len, tx, modbus_data.holdingreg, HOLDING_LEN);
+
+    case 0x04U: // 读输入寄存器（只读）
+        return mb_read_reg(rx, rx_len, tx, modbus_data.inputreg, INPUTREG_LEN);
+
+    case 0x05U: // 写单个线圈
+    case 0x0FU: // 写多个线圈
+        return mb_write_bits(rx, (uint8_t)rx_len, tx, modbus_data.coil, COIL_LEN);
+
+    case 0x06U: // 写单个保持寄存器
+    case 0x10U: // 写多个保持寄存器
+        return mb_write_reg(rx, (uint8_t)rx_len, tx, modbus_data.holdingreg, HOLDING_LEN);
+
+    default:    // 不支持的功能码
+        return 0;
+    }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
